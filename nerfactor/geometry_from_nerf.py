@@ -78,16 +78,47 @@ def main(_):
     # Restore model
     model = restore_model(config, latest_ckpt)
 
-    for mode in ('train', 'vali', 'test'):
-        # Make datapipe
-        n_views, datapipe = make_datapipe(config, mode)
+    is_extract_mesh = True
+    if is_extract_mesh:
+        # extract mesh
+        # added by lbz
+        N = 512
+        t = np.linspace(-1.2, 1.2, N+1)
+        query_pts = np.stack(np.meshgrid(t, t, t), -1).astype(np.float32)
+        print(query_pts.shape)
+        sh = query_pts.shape
+        pts_flat = tf.reshape(query_pts, (-1, 3))
+        sigma_flat = eval_sigma_mlp(model, pts_flat, use_fine=True)
+        sigma = np.maximum(sigma_flat.numpy(), 0.)
+        sigma = np.reshape(sigma, sh[:-1])
 
-        # Process all views of this mode
-        for batch in tqdm(datapipe, desc=f"Views ({mode})", total=n_views):
-            process_view(config, model, batch)
+        import pdb
+        pdb.set_trace()
 
-            if FLAGS.debug:
-                continue
+        import mcubes
+        threshold = 20.
+        print('fraction occupied', np.mean(sigma > threshold))
+        vertices, triangles = mcubes.marching_cubes(sigma, threshold)
+        print('done', vertices.shape, triangles.shape)
+        cube_mesh_dir = join(FLAGS.out_root, 'mesh.dae')
+        mcubes.export_mesh(vertices, triangles, cube_mesh_dir)
+
+        import trimesh
+        obj_mesh_dir = join(FLAGS.out_root, 'mesh.obj')
+        mesh = trimesh.Trimesh(vertices / N - .5, triangles)
+        trimesh.exchange.export.export_mesh(mesh, obj_mesh_dir)
+
+    else:
+        for mode in ('train', 'vali', 'test'):
+            # Make datapipe
+            n_views, datapipe = make_datapipe(config, mode)
+
+            # Process all views of this mode
+            for batch in tqdm(datapipe, desc=f"Views ({mode})", total=n_views):
+                process_view(config, model, batch)
+
+                if FLAGS.debug:
+                    continue
 
 
 def process_view(config, model, batch):
